@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "https://pixelboard-3xks.onrender.com/api/$1"
+    }
+  ]
+}
