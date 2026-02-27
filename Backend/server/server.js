@@ -40,13 +40,19 @@ const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
   maxHttpBufferSize: 50 * 1024 * 1024, // 50 MB — supports large file sharing (PDFs, images)
   cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:3000',
+    origin: process.env.CLIENT_URL || 'https://pixelboard-cyan.vercel.app',
     methods: ['GET', 'POST'],
   },
 });
 
 // ─── Express Middleware ────────────────────────────────────────────────────────
-app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:3000', credentials: true }));
+app.set('trust proxy', 1);
+app.use(
+  cors({
+    origin: process.env.CLIENT_URL || 'https://pixelboard-cyan.vercel.app',
+    credentials: true,
+  })
+);
 app.use(express.json());
 
 // Session required by Passport for the OAuth redirect cycle
