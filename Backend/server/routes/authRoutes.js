@@ -22,7 +22,7 @@ router.get('/google',
 // @route  GET /api/auth/google/callback  →  Google redirects back here
 router.get('/google/callback',
   passport.authenticate('google', {
-    failureRedirect: `${process.env.CLIENT_URL || 'http://localhost:3000'}/auth?error=oauth_failed`,
+    failureRedirect: `${(process.env.CLIENT_URL || 'http://localhost:3000').split(',')[0].trim()}/auth?error=oauth_failed`,
   }),
   googleCallback
 );

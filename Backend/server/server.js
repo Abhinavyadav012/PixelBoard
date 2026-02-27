@@ -36,24 +36,34 @@ connectDB();
 const app = express();
 const httpServer = http.createServer(app);
 
-const isProduction = process.env.NODE_ENV === 'production';
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000';
+// Support multiple origins: set CLIENT_URL to a comma-separated list if needed
+// e.g. "https://pixel-board-navy.vercel.app,https://pixelboard-cyan.vercel.app"
+const ALLOWED_ORIGINS = (process.env.CLIENT_URL || 'http://localhost:3000')
+  .split(',')
+  .map((u) => u.trim());
 
 // Trust Render / Vercel reverse proxy so rate-limiter and secure cookies work
-if (isProduction) app.set('trust proxy', 1);
+app.set('trust proxy', 1);
+
+// Dynamic origin checker — works with one or many origins
+const corsOrigin = (origin, cb) => {
+  // Allow requests with no origin (mobile apps, curl, server-to-server)
+  if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+  cb(new Error('Not allowed by CORS'));
+};
 
 // Initialize Socket.io with CORS
 const io = new Server(httpServer, {
   maxHttpBufferSize: 50 * 1024 * 1024, // 50 MB — supports large file sharing (PDFs, images)
   cors: {
-    origin: CLIENT_URL,
+    origin: corsOrigin,
     methods: ['GET', 'POST'],
     credentials: true,
   },
 });
 
 // ─── Express Middleware ────────────────────────────────────────────────────────
-app.use(cors({ origin: CLIENT_URL, credentials: true }));
+app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
@@ -62,10 +72,11 @@ app.use(session({
   secret:            process.env.SESSION_SECRET || 'pixelboard_session_secret',
   resave:            false,
   saveUninitialized: false,
+  proxy:             true,
   cookie: {
-    secure:   isProduction,           // true on HTTPS (Render), false on localhost
-    sameSite: isProduction ? 'none' : 'lax',  // cross-site cookies for Vercel→Render
-    maxAge:   10 * 60 * 1000,         // 10 min — only for OAuth handshake
+    httpOnly: true,
+    secure:   true,
+    sameSite: 'none',
   },
 }));
 app.use(passport.initialize());

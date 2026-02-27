@@ -115,11 +115,11 @@ const googleCallback = (req, res) => {
       email:  user.email  || '',
       avatar: user.avatar || '',
     });
-    const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
+    const clientUrl = (process.env.CLIENT_URL || 'http://localhost:3000').split(',')[0].trim();
     res.redirect(`${clientUrl}/auth/callback?${params.toString()}`);
   } catch (err) {
     console.error('Google Callback Error:', err.message);
-    const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
+    const clientUrl = (process.env.CLIENT_URL || 'http://localhost:3000').split(',')[0].trim();
     res.redirect(`${clientUrl}/auth?error=oauth_failed`);
   }
 };
