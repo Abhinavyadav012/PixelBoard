@@ -71,14 +71,14 @@ const socketHandler = (io) => {
         roomUserPermissions[roomId][socket.id] = boardMode === 'host-only' ? 'read-only' : 'read-write';
       }
 
-      // Send the current live user list + permissions to the joining user
-      socket.emit('roomUsersSync', {
+      // Broadcast the current live user list + permissions to ALL users in the room
+      io.to(roomId).emit('roomUsersSync', {
         users: roomUsers[roomId],
         permissions: roomUserPermissions[roomId] || {},
         boardMode,
       });
 
-      // Notify other users in the room
+      // Notify other users in the room (for toast notification)
       socket.to(roomId).emit('userJoined', {
         userId: user?._id || socket.id,
         socketId: socket.id,
@@ -237,7 +237,25 @@ const socketHandler = (io) => {
     socket.on('changeBoardMode', async ({ roomId, mode }) => {
       try {
         await Room.findOneAndUpdate({ roomId }, { boardMode: mode });
+
+        // Update in-memory permissions for all non-host users
+        if (roomUserPermissions[roomId] && roomUsers[roomId]) {
+          const roomDoc = await Room.findOne({ roomId });
+          const hostUserId = roomDoc?.host?.toString();
+          for (const [sid, info] of Object.entries(roomUsers[roomId])) {
+            if (info.userId === hostUserId) continue;
+            roomUserPermissions[roomId][sid] = mode === 'host-only' ? 'read-only' : 'read-write';
+          }
+        }
+
         io.to(roomId).emit('boardModeChanged', { mode });
+
+        // Re-broadcast full user/permission state so everyone stays in sync
+        io.to(roomId).emit('roomUsersSync', {
+          users: roomUsers[roomId] || {},
+          permissions: roomUserPermissions[roomId] || {},
+          boardMode: mode,
+        });
       } catch (err) {
         console.error('Change board mode error:', err.message);
       }
@@ -316,6 +334,14 @@ const socketHandler = (io) => {
     });
 
     // -------------------------------------------------------
+    // codingUpdate — collaborative code editor sync
+    // Broadcast code + language to all other users in the room (no DB persist)
+    // -------------------------------------------------------
+    socket.on('codingUpdate', ({ roomId, code, language }) => {
+      socket.to(roomId).emit('codingSync', { code, language });
+    });
+
+    // -------------------------------------------------------
     // disconnect — notify room when user leaves
     // -------------------------------------------------------
     socket.on('disconnecting', () => {
@@ -330,6 +356,11 @@ const socketHandler = (io) => {
             userId: socket.id,
             socketId: socket.id,
             message: `${name} left the room`,
+          });
+          // Broadcast updated user list to remaining members
+          socket.to(roomId).emit('roomUsersSync', {
+            users: roomUsers[roomId] || {},
+            permissions: roomUserPermissions[roomId] || {},
           });
         }
       });

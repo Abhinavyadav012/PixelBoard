@@ -36,25 +36,37 @@ connectDB();
 const app = express();
 const httpServer = http.createServer(app);
 
+const isProduction = process.env.NODE_ENV === 'production';
+const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000';
+
+// Trust Render / Vercel reverse proxy so rate-limiter and secure cookies work
+if (isProduction) app.set('trust proxy', 1);
+
 // Initialize Socket.io with CORS
 const io = new Server(httpServer, {
   maxHttpBufferSize: 50 * 1024 * 1024, // 50 MB — supports large file sharing (PDFs, images)
   cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:3000',
+    origin: CLIENT_URL,
     methods: ['GET', 'POST'],
+    credentials: true,
   },
 });
 
 // ─── Express Middleware ────────────────────────────────────────────────────────
-app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:3000', credentials: true }));
-app.use(express.json());
+app.use(cors({ origin: CLIENT_URL, credentials: true }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Session required by Passport for the OAuth redirect cycle
 app.use(session({
   secret:            process.env.SESSION_SECRET || 'pixelboard_session_secret',
   resave:            false,
   saveUninitialized: false,
-  cookie:            { secure: false, maxAge: 10 * 60 * 1000 }, // 10 min — only for OAuth handshake
+  cookie: {
+    secure:   isProduction,           // true on HTTPS (Render), false on localhost
+    sameSite: isProduction ? 'none' : 'lax',  // cross-site cookies for Vercel→Render
+    maxAge:   10 * 60 * 1000,         // 10 min — only for OAuth handshake
+  },
 }));
 app.use(passport.initialize());
 app.use(passport.session());

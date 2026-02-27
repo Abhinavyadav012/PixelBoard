@@ -15,6 +15,15 @@ import CodingPanel from '../components/board/CodingPanel';
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
 
+/* ICE servers for WebRTC screen sharing */
+const ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun3.l.google.com:19302' },
+  { urls: 'stun:stun4.l.google.com:19302' },
+];
+
 /* â”€â”€ Mode definitions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 const MODES = [
   {
@@ -54,6 +63,7 @@ const BoardPage = () => {
 
   // â”€â”€ Socket â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [socket, setSocket] = useState(null);
+  const [socketConnected, setSocketConnected] = useState(false);
   const socketRef           = useRef(null);
 
   // â”€â”€ Room & chat state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -137,8 +147,24 @@ const BoardPage = () => {
   // â”€â”€ Socket init â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => {
     if (!user) return;
-    const s = io(SOCKET_URL, { auth: { token: localStorage.getItem('token') } });
-    s.on('connect', () => { s.emit('joinRoom', { roomId, user }); });
+    const s = io(SOCKET_URL, {
+      auth: { token: localStorage.getItem('token') },
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000,
+      timeout: 10000,
+      withCredentials: true,
+    });
+    s.on('connect', () => {
+      setSocketConnected(true);
+      s.emit('joinRoom', { roomId, user });
+    });
+    s.on('disconnect', () => {
+      setSocketConnected(false);
+    });
+    s.on('connect_error', (err) => {
+      setSocketConnected(false);
+      console.error('Socket connection error:', err.message);
+    });
     s.on('userJoined', ({ userId, socketId, name }) => {
       notify(`${name} joined the room`, 'info');
       setActiveUsers((prev) => {
@@ -216,7 +242,7 @@ const BoardPage = () => {
     });
 
     s.on('screenShareOffer', async ({ from, offer }) => {
-      const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       viewerPcRef.current = pc;
       pc.ontrack = (e) => {
         const stream = e.streams[0];
@@ -248,7 +274,7 @@ const BoardPage = () => {
     // â”€â”€ Host: viewer is ready, send offer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     s.on('sendOfferTo', async ({ viewerSocketId }) => {
       if (!localScreenStreamRef.current) return;
-      const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       peerConnectionsRef.current[viewerSocketId] = pc;
       localScreenStreamRef.current.getTracks().forEach((t) => pc.addTrack(t, localScreenStreamRef.current));
       pc.onicecandidate = (e) => {
@@ -273,6 +299,8 @@ const BoardPage = () => {
       s.off('permissionUpdated');
       s.off('userKicked');
       s.off('roomUsersSync');
+      s.off('connect_error');
+      s.off('disconnect');
       s.disconnect();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -297,8 +325,12 @@ const BoardPage = () => {
           setMsgHasMore(msgData.hasMore || false);
           setMsgPage(1);
         }
+        // Set initial activeUsers from participants (socket will override with live data)
         const participants = roomRes.data.participants || [];
-        setActiveUsers(participants.map((p) => ({ userId: p._id, name: p.name, socketId: null })));
+        setActiveUsers((prev) => prev.length === 0
+          ? participants.map((p) => ({ userId: p._id, name: p.name, socketId: null }))
+          : prev
+        );
         setBoardMode(roomRes.data.boardMode || 'public');
         hostIdRef.current = roomRes.data.host?._id || roomRes.data.host;
       } catch (err) {
@@ -529,6 +561,16 @@ const BoardPage = () => {
       </header>
 
       {/* â”€â”€ Notification toast â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* Socket connection warning */}
+      {!socketConnected && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center justify-center gap-2 shrink-0 z-10">
+          <div className="w-3 h-3 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+          <span className="text-xs font-semibold text-amber-700">
+            Connecting to server… Drawing, chat and real-time features require a connection.
+          </span>
+        </div>
+      )}
+
       {notification && (
         <div className={`fixed top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl shadow-lg text-sm font-medium
           transition pointer-events-none border
@@ -715,7 +757,7 @@ const BoardPage = () => {
                 </div>
               </div>
               <div className="flex-1 min-h-0 overflow-hidden">
-                <CodingPanel />
+                <CodingPanel socket={socket} roomId={roomId} readOnly={!canWrite} />
               </div>
             </div>
           )}

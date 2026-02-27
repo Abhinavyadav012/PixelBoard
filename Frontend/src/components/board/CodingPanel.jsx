@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 
 const LANGUAGES = ['JavaScript', 'Python', 'TypeScript', 'HTML', 'CSS', 'Java', 'C++', 'Go', 'Rust', 'SQL'];
 
@@ -23,17 +23,55 @@ const THEMES = {
   },
 };
 
-const CodingPanel = () => {
+const CodingPanel = ({ socket = null, roomId = null, readOnly = false }) => {
   const [code, setCode] = useState('// Welcome to the PixelBoard Code Editor\n// Start typing your code here...\n\n');
   const [language, setLanguage] = useState('JavaScript');
   const [theme, setTheme] = useState('dark');
   const [fontSize, setFontSize] = useState(14);
   const [copied, setCopied] = useState(false);
   const textareaRef = useRef(null);
+  const syncTimerRef = useRef(null);
+  const isRemoteUpdate = useRef(false);
 
   const t = THEMES[theme];
 
   const lines = code.split('\n');
+
+  // ── Socket sync: receive remote coding changes ───────────────────────────
+  useEffect(() => {
+    if (!socket) return;
+    const handle = ({ code: remoteCode, language: remoteLang }) => {
+      isRemoteUpdate.current = true;
+      if (remoteCode !== undefined) setCode(remoteCode);
+      if (remoteLang !== undefined) setLanguage(remoteLang);
+      isRemoteUpdate.current = false;
+    };
+    socket.on('codingSync', handle);
+    return () => socket.off('codingSync', handle);
+  }, [socket]);
+
+  // Broadcast own changes (debounced 300ms)
+  const broadcastCode = useCallback((newCode, newLang) => {
+    if (!socket || !roomId) return;
+    socket.emit('codingUpdate', { roomId, code: newCode, language: newLang });
+  }, [socket, roomId]);
+
+  const handleCodeChange = (e) => {
+    const newCode = e.target.value;
+    setCode(newCode);
+    if (!isRemoteUpdate.current && socket && roomId) {
+      clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = setTimeout(() => broadcastCode(newCode, language), 300);
+    }
+  };
+
+  const handleLanguageChange = (e) => {
+    const newLang = e.target.value;
+    setLanguage(newLang);
+    if (!isRemoteUpdate.current && socket && roomId) {
+      broadcastCode(code, newLang);
+    }
+  };
 
   // Handle Tab key for indentation
   const handleKeyDown = useCallback((e) => {
@@ -43,6 +81,10 @@ const CodingPanel = () => {
       const end   = e.target.selectionEnd;
       const newCode = code.slice(0, start) + '  ' + code.slice(end);
       setCode(newCode);
+      if (!isRemoteUpdate.current && socket && roomId) {
+        clearTimeout(syncTimerRef.current);
+        syncTimerRef.current = setTimeout(() => broadcastCode(newCode, language), 300);
+      }
       requestAnimationFrame(() => {
         if (textareaRef.current) {
           textareaRef.current.selectionStart = start + 2;
@@ -60,9 +102,14 @@ const CodingPanel = () => {
       const prefix = ['Python', 'Ruby'].includes(language) ? '# ' : '// ';
       const newLine = line.startsWith(prefix) ? line.slice(prefix.length) : prefix + line;
       const end2 = lineEnd === -1 ? code.length : lineEnd;
-      setCode(code.slice(0, lineStart) + newLine + code.slice(end2));
+      const toggledCode = code.slice(0, lineStart) + newLine + code.slice(end2);
+      setCode(toggledCode);
+      if (!isRemoteUpdate.current && socket && roomId) {
+        clearTimeout(syncTimerRef.current);
+        syncTimerRef.current = setTimeout(() => broadcastCode(toggledCode, language), 300);
+      }
     }
-  }, [code, language]);
+  }, [code, language, socket, roomId, broadcastCode]);
 
   const copyCode = () => {
     navigator.clipboard.writeText(code);
@@ -101,7 +148,7 @@ const CodingPanel = () => {
           {/* Language picker */}
           <select
             value={language}
-            onChange={(e) => setLanguage(e.target.value)}
+            onChange={handleLanguageChange}
             className={`text-xs rounded-md px-2 py-0.5 border ${t.header} ${t.headerText} bg-transparent focus:outline-none focus:ring-1 focus:ring-blue-500`}
           >
             {LANGUAGES.map(l => <option key={l} value={l}>{l}</option>)}
@@ -158,8 +205,9 @@ const CodingPanel = () => {
         <textarea
           ref={textareaRef}
           value={code}
-          onChange={(e) => setCode(e.target.value)}
-          onKeyDown={handleKeyDown}
+          onChange={handleCodeChange}
+          onKeyDown={readOnly ? undefined : handleKeyDown}
+          readOnly={readOnly}
           spellCheck={false}
           autoComplete="off"
           autoCorrect="off"
