@@ -82,6 +82,40 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
+// ─── Request Logging Middleware ────────────────────────────────────────────────
+app.use((req, res, next) => {
+  const timestamp = new Date().toISOString();
+  const method = req.method;
+  const url = req.originalUrl;
+  
+  console.log(`\n[${timestamp}] 📨 ${method} ${url}`);
+  
+  // Log query parameters if present
+  if (Object.keys(req.query).length > 0) {
+    console.log(`   Query: ${JSON.stringify(req.query)}`);
+  }
+  
+  // Log request body for POST/PUT/PATCH requests
+  if (['POST', 'PUT', 'PATCH'].includes(method) && req.body) {
+    const bodyStr = JSON.stringify(req.body);
+    const truncatedBody = bodyStr.length > 200 ? bodyStr.substring(0, 200) + '...' : bodyStr;
+    console.log(`   Body: ${truncatedBody}`);
+  }
+  
+  // Log IP address
+  const ip = req.ip || req.connection.remoteAddress;
+  console.log(`   IP: ${ip}`);
+  
+  // Log response status when response is sent
+  const originalJson = res.json;
+  res.json = function(data) {
+    console.log(`   ✅ Response: ${res.statusCode}`);
+    return originalJson.call(this, data);
+  };
+  
+  next();
+});
+
 // ─── REST API Routes ──────────────────────────────────────────────────────────
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/rooms', roomRoutes);
